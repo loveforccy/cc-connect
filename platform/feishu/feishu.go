@@ -112,6 +112,13 @@ type replyContext struct {
 	sessionKey string
 }
 
+// footerButton is a custom action button rendered at the bottom of reply cards.
+type footerButton struct {
+	Label    string // button text
+	Type     string // "primary" | "default" | "danger" (default: "default")
+	Dispatch string // if set, sends this text to the agent session on click (optional)
+}
+
 type Platform struct {
 	mu                         sync.RWMutex
 	platformName               string
@@ -144,6 +151,8 @@ type Platform struct {
 	botOpenID        string
 	peerBots         map[string]string // app_id -> friendly alias, for quoted-reply attribution
 	mentionMap       map[string]string // agent name -> open_id (for outbound @ resolution)
+	// footerButtons are custom action buttons rendered at the bottom of reply cards.
+	footerButtons []footerButton
 	userNameCache    sync.Map          // open_id -> display name
 	chatNameCache    sync.Map          // chat_id -> chat name
 	chatMemberCache  sync.Map          // chatID -> *chatMemberEntry
@@ -369,6 +378,39 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 		imageBatchWindow = time.Duration(ms) * time.Millisecond
 	}
 
+	// Custom footer buttons on reply cards.
+	var footerButtons []footerButton
+	if raw, ok := opts["footer_buttons"]; ok {
+		parseFooterButton := func(m map[string]any) {
+			label, _ := m["label"].(string)
+			if strings.TrimSpace(label) == "" {
+				return
+			}
+			btnType, _ := m["type"].(string)
+			if btnType == "" {
+				btnType = "default"
+			}
+			dispatch, _ := m["dispatch"].(string)
+			footerButtons = append(footerButtons, footerButton{
+				Label:    label,
+				Type:     btnType,
+				Dispatch: dispatch,
+			})
+		}
+		switch arr := raw.(type) {
+		case []any:
+			for _, item := range arr {
+				if m, ok := item.(map[string]any); ok {
+					parseFooterButton(m)
+				}
+			}
+		case []map[string]any:
+			for _, m := range arr {
+				parseFooterButton(m)
+			}
+		}
+	}
+
 	// Webhook mode configuration (for Lark international version)
 	port, _ := opts["port"].(string)
 	if port == "" {
@@ -409,9 +451,10 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 		port:                       port,
 		callbackPath:               callbackPath,
 		encryptKey:                 encryptKey,
-		peerBots:                   peerBots,
-		mentionMap:                 mentionMap,
-		imageBatch:                 make(map[string]*imageBatchEntry),
+		peerBots:                  peerBots,
+		mentionMap:                mentionMap,
+		footerButtons:             footerButtons,
+		imageBatch:                make(map[string]*imageBatchEntry),
 		imageBatchWindow:           imageBatchWindow,
 	}
 	if !useInteractiveCard {
@@ -704,6 +747,29 @@ func (p *Platform) onCardAction(event *callback.CardActionTriggerEvent) (*callba
 		chatID = userID
 	}
 	sessionKey := p.sessionKeyFromCardAction(chatID, userID, event.Event.Action.Value)
+
+	// act:footer-btn-N — custom footer button click.
+	if strings.HasPrefix(actionVal, "act:footer-btn-") {
+		idxStr := strings.TrimPrefix(actionVal, "act:footer-btn-")
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil || idx < 0 || idx >= len(p.footerButtons) {
+			return nil, nil
+		}
+		btn := p.footerButtons[idx]
+		if btn.Dispatch != "" {
+			rctx := replyContext{messageID: messageID, chatID: chatID, sessionKey: sessionKey}
+			go p.dispatchCoreMessage(&core.Message{
+				SessionKey: sessionKey,
+				Platform:   p.platformName,
+				UserID:     userID,
+				UserName:   p.resolveUserName(userID),
+				ChatName:   p.resolveChatName(chatID),
+				Content:    btn.Dispatch,
+				ReplyCtx:   rctx,
+			})
+		}
+		return nil, nil
+	}
 
 	// nav: / act: — synchronous card update
 	if strings.HasPrefix(actionVal, "nav:") || strings.HasPrefix(actionVal, "act:") {
@@ -2639,7 +2705,7 @@ func (p *Platform) Reply(ctx context.Context, rctx any, content string) error {
 	}
 
 	content = p.resolveMentionsInContent(ctx, rc.chatID, content)
-	msgType, msgBody := buildReplyContent(content)
+	msgType, msgBody := buildReplyContent(content, p.footerButtons)
 
 	if !p.shouldUseThreadOrReplyAPI(rc) {
 		return p.sendNewMessageToChat(ctx, rc, msgType, msgBody)
@@ -2661,7 +2727,7 @@ func (p *Platform) Send(ctx context.Context, rctx any, content string) error {
 	}
 
 	content = p.resolveMentionsInContent(ctx, rc.chatID, content)
-	msgType, msgBody := buildReplyContent(content)
+	msgType, msgBody := buildReplyContent(content, p.footerButtons)
 	return p.sendNewMessageToChat(ctx, rc, msgType, msgBody)
 }
 
@@ -2686,7 +2752,7 @@ func (p *Platform) SendWithStatusFooter(ctx context.Context, rctx any, content, 
 	}
 	processedBody := sanitizeMarkdownURLs(preprocessFeishuMarkdown(content))
 	processedFooter := sanitizeMarkdownURLs(preprocessFeishuMarkdown(footer))
-	cardJSON := buildCardJSONWithStatusFooter(processedBody, processedFooter)
+	cardJSON := buildCardJSONWithStatusFooter(processedBody, processedFooter, p.footerButtons)
 	if p.shouldUseThreadOrReplyAPI(rc) {
 		return p.replyMessage(ctx, rc, larkim.MsgTypeInteractive, cardJSON)
 	}
@@ -2913,7 +2979,7 @@ func detectMimeType(data []byte) string {
 	return "image/png"
 }
 
-func buildReplyContent(content string) (msgType string, body string) {
+func buildReplyContent(content string, footerButtons []footerButton) (msgType string, body string) {
 	// Feishu does not generate mention events for <at> tags in card/post
 	// messages sent by bots. Force MsgTypeText when a real mention is present
 	// (resolved to an <at user_id="..."> or <at id=...> tag) so Feishu
@@ -2932,7 +2998,7 @@ func buildReplyContent(content string) (msgType string, body string) {
 	if countMarkdownTables(content) > maxCardTables {
 		return larkim.MsgTypePost, buildPostMdJSON(content)
 	}
-	return larkim.MsgTypeInteractive, buildCardJSON(sanitizeMarkdownURLs(preprocessFeishuMarkdown(content)))
+	return larkim.MsgTypeInteractive, buildCardJSON(sanitizeMarkdownURLs(preprocessFeishuMarkdown(content)), footerButtons)
 }
 
 // hasComplexMarkdown detects code blocks or tables that require card rendering.
@@ -3678,23 +3744,70 @@ type feishuPreviewHandle struct {
 	lastContent string
 }
 
+// footerButtonsElement returns Feishu card action button elements for
+// custom footer buttons. Callers should append these to the body.elements slice.
+func footerButtonsElement(buttons []footerButton) []map[string]any {
+	if len(buttons) == 0 {
+		return nil
+	}
+	columns := make([]map[string]any, 0, len(buttons))
+	for i, btn := range buttons {
+		btnType := btn.Type
+		if btnType == "" {
+			btnType = "default"
+		}
+		btnLabel := btn.Label
+		columns = append(columns, map[string]any{
+			"tag":              "column",
+			"width":            "auto",
+			"vertical_align":   "center",
+			"horizontal_align": "left",
+			"padding":          "0px 4px",
+			"elements": []map[string]any{
+				{
+					"tag":  "button",
+					"text": map[string]any{"tag": "plain_text", "content": btnLabel},
+					"type": btnType,
+					"value": map[string]any{
+						"action": fmt.Sprintf("act:footer-btn-%d", i),
+					},
+				},
+			},
+		})
+	}
+	columnSet := map[string]any{
+		"tag":        "column_set",
+		"flex_mode":  "none",
+		"background_style": "default",
+		"columns":    columns,
+	}
+	return []map[string]any{
+		{"tag": "hr"},
+		columnSet,
+	}
+}
+
 // buildCardJSON builds a Feishu interactive card JSON string with a markdown element.
 // Uses schema 2.0 which supports code blocks, tables, and inline formatting.
 // Card font is inherently smaller than Post/Text — this is a Feishu platform limitation.
-func buildCardJSON(content string) string {
+func buildCardJSON(content string, footerButtons []footerButton) string {
 	content = sanitizeCardMarkdownForCard(content)
+	elements := []map[string]any{
+		{
+			"tag":     "markdown",
+			"content": content,
+		},
+	}
+	if btns := footerButtonsElement(footerButtons); btns != nil {
+		elements = append(elements, btns...)
+	}
 	card := map[string]any{
 		"schema": "2.0",
 		"config": map[string]any{
 			"wide_screen_mode": true,
 		},
 		"body": map[string]any{
-			"elements": []map[string]any{
-				{
-					"tag":     "markdown",
-					"content": content,
-				},
-			},
+			"elements": elements,
 		},
 	}
 	b, _ := json.Marshal(card)
@@ -3704,9 +3817,9 @@ func buildCardJSON(content string) string {
 // buildCardJSONWithStatusFooter builds an interactive card with a body
 // markdown element followed by a small/dim status-footer markdown element
 // (Lark `text_size: "notation"`). Empty footer falls through to buildCardJSON.
-func buildCardJSONWithStatusFooter(content, footer string) string {
+func buildCardJSONWithStatusFooter(content, footer string, footerButtons []footerButton) string {
 	if strings.TrimSpace(footer) == "" {
-		return buildCardJSON(content)
+		return buildCardJSON(content, footerButtons)
 	}
 	segments := sanitizeCardMarkdownSegmentsForCard([]string{content, footer})
 	content = segments[0]
@@ -3724,6 +3837,9 @@ func buildCardJSONWithStatusFooter(content, footer string) string {
 			"content":   footer,
 			"text_size": "notation",
 		},
+	}
+	if btns := footerButtonsElement(footerButtons); btns != nil {
+		elements = append(elements, btns...)
 	}
 	card := map[string]any{
 		"schema": "2.0",
@@ -4137,7 +4253,7 @@ func appendProgressGroupedElements(elements []map[string]any, items []core.Progr
 func buildProgressCardJSONFromPayload(payload *core.ProgressCardPayload) string {
 	items := normalizeProgressItems(payload)
 	if len(items) == 0 {
-		return buildCardJSON(" ")
+		return buildCardJSON(" ", nil)
 	}
 
 	agent := progressAgentLabel(payload.Agent)
@@ -4200,7 +4316,7 @@ func buildPreviewCardJSON(content string) string {
 	if payload, ok := core.ParseProgressCardPayload(content); ok {
 		return buildProgressCardJSONFromPayload(payload)
 	}
-	return buildCardJSON(sanitizeMarkdownURLs(content))
+	return buildCardJSON(sanitizeMarkdownURLs(content), nil)
 }
 
 // SendPreviewStart sends a new card message and returns a handle for subsequent edits.
@@ -4450,7 +4566,7 @@ func (p *Platform) UpdateMessage(ctx context.Context, previewHandle any, content
 		if containsMarkdown(content) {
 			processed = preprocessFeishuMarkdown(content)
 		}
-		cardJSON = buildCardJSON(sanitizeMarkdownURLs(processed))
+		cardJSON = buildCardJSON(sanitizeMarkdownURLs(processed), p.footerButtons)
 	}
 	// Route card-entity-bound messages to cardkit-v1 full-card update API.
 	// Im.Message.Patch on entity-referenced messages is silently no-op for the
@@ -4484,7 +4600,7 @@ func (p *Platform) UpdateMessageWithStatusFooter(ctx context.Context, previewHan
 	// resolve since the matching Send path resolves on the chat-thread API.
 	processedBody := sanitizeMarkdownURLs(preprocessFeishuMarkdown(content))
 	processedFooter := sanitizeMarkdownURLs(preprocessFeishuMarkdown(footer))
-	cardJSON := buildCardJSONWithStatusFooter(processedBody, processedFooter)
+	cardJSON := buildCardJSONWithStatusFooter(processedBody, processedFooter, p.footerButtons)
 	// Same card-entity routing as UpdateMessage above.
 	h.mu.Lock()
 	cardID := h.cardID
@@ -6228,8 +6344,8 @@ const maxRichCardJSONBytes = 28000
 // buildRichCard renders a Card 2.0 "single-card" turn with collapsible
 // reasoning/tool panels, streaming markdown body, status-colored header, and a
 // pre-composed multi-line statusFooter (engine-owned, includes elapsed).
-func buildRichCard(status core.CardStatus, _ string, steps []core.ToolStep, markdown string, streaming bool, statusFooter string) string {
-	b, err := buildRichCardJSONBytes(status, steps, markdown, streaming, statusFooter)
+func buildRichCard(status core.CardStatus, _ string, steps []core.ToolStep, markdown string, streaming bool, statusFooter string, footerButtons []footerButton) string {
+	b, err := buildRichCardJSONBytes(status, steps, markdown, streaming, statusFooter, footerButtons)
 	if err != nil {
 		slog.Debug("feishu: build rich card marshal failed, fallback to basic card", "error", err)
 		return buildCardJSONWithStatus(markdown, status)
@@ -6251,7 +6367,7 @@ func buildRichCard(status core.CardStatus, _ string, steps []core.ToolStep, mark
 		{perLane: 3, textLen: 80},
 	} {
 		compactSteps := compactRichStepsForCardSize(steps, limit.perLane, limit.textLen)
-		compact, err := buildRichCardJSONBytes(status, compactSteps, markdown, streaming, statusFooter)
+		compact, err := buildRichCardJSONBytes(status, compactSteps, markdown, streaming, statusFooter, footerButtons)
 		if err == nil && len(compact) <= maxRichCardJSONBytes {
 			slog.Debug("feishu: rich card exceeded size limit, compacted panels",
 				"original_size", len(b),
@@ -6271,7 +6387,7 @@ func buildRichCard(status core.CardStatus, _ string, steps []core.ToolStep, mark
 	return buildCardJSONWithStatus(fallbackMarkdown, status)
 }
 
-func buildRichCardJSONBytes(status core.CardStatus, steps []core.ToolStep, markdown string, streaming bool, statusFooter string) ([]byte, error) {
+func buildRichCardJSONBytes(status core.CardStatus, steps []core.ToolStep, markdown string, streaming bool, statusFooter string, footerButtons []footerButton) ([]byte, error) {
 	reasoningSteps, toolSteps := splitRichStepsByLane(steps)
 	panelMaps := make([]map[string]any, 0, 2)
 	if len(reasoningSteps) > 0 {
@@ -6328,6 +6444,9 @@ func buildRichCardJSONBytes(status core.CardStatus, steps []core.ToolStep, markd
 		// Insert a horizontal separator between body and footer so the boundary is clear.
 		elements = append(elements, map[string]any{"tag": "hr"})
 		elements = append(elements, footerElements...)
+	}
+	if btns := footerButtonsElement(footerButtons); btns != nil {
+		elements = append(elements, btns...)
 	}
 
 	// Header template color follows status.
@@ -6454,7 +6573,7 @@ func splitMarkdownByTables(md string, maxTables int) []string {
 // statusFooter (multi-line, '\n'-separated) and passes it through; the renderer
 // splits it back into one dim notation block per line.
 func (p *Platform) BuildRichCard(status core.CardStatus, title string, steps []core.ToolStep, markdown string, streaming bool, statusFooter string) string {
-	return buildRichCard(status, title, steps, markdown, streaming, statusFooter)
+	return buildRichCard(status, title, steps, markdown, streaming, statusFooter, p.footerButtons)
 }
 
 // SplitMarkdownByTables implements core.MarkdownTableSplitter.
