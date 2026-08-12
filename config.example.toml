@@ -1047,6 +1047,25 @@ app_secret = "your-feishu-app-secret"
 #                              # 网络或设备发送间隔超过 500ms 且仍被拆成多轮，可调高（如 800–1200ms）；如果
 #                              # 只是单图发送，希望响应更快，也可以适当调低。
 
+# # Custom footer buttons on reply cards / 回复卡片底部自定义脚注按钮
+# # Each button supports: label (text), type (primary/default/danger),
+# # dispatch (send text to agent session on click).
+# # 每个按钮支持: label(文本), type(样式), dispatch(转发到 agent session)
+# [[projects.platforms.options.footer_buttons]]
+# label = "👍 有帮助"
+# type = "primary"
+# dispatch = "[用户反馈: 有帮助]"
+#
+# [[projects.platforms.options.footer_buttons]]
+# label = "👎 无帮助"
+# type = "default"
+# dispatch = "[用户反馈: 无帮助，请询问用户具体哪里不满意]"
+#
+# [[projects.platforms.options.footer_buttons]]
+# label = "👨‍💼 转人工"
+# type = "default"
+# dispatch = "[用户请求转人工]"
+
 # Lark (International Version) / Lark 国际版
 # Lark now supports WebSocket long-connection too; webhook mode is only needed
 # when you explicitly configure encrypt_key.
