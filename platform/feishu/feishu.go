@@ -132,6 +132,7 @@ type Platform struct {
 	doneEmoji                  string
 	allowFrom                  string
 	allowChat                  string
+	workspaceMapping           map[string]string // chat_id -> workspace name for multi-workspace mode
 	groupOnly                  bool
 	groupReplyAll              bool
 	respondToAtEveryoneAndHere bool
@@ -309,6 +310,14 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 	allowFrom, _ := opts["allow_from"].(string)
 	core.CheckAllowFrom(name, allowFrom)
 	allowChat, _ := opts["allow_chat"].(string)
+	workspaceMapping := make(map[string]string)
+	if raw, ok := opts["workspace_mapping"].(map[string]any); ok {
+		for k, v := range raw {
+			if vs, ok := v.(string); ok {
+				workspaceMapping[strings.TrimSpace(k)] = vs
+			}
+		}
+	}
 	groupOnly, _ := opts["group_only"].(bool)
 	groupReplyAll, _ := opts["group_reply_all"].(bool)
 	// require_mention = false is equivalent to group_reply_all = true:
@@ -438,6 +447,7 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 		doneEmoji:                  doneEmoji,
 		allowFrom:                  allowFrom,
 		allowChat:                  allowChat,
+		workspaceMapping:           workspaceMapping,
 		groupOnly:                  groupOnly,
 		groupReplyAll:              groupReplyAll,
 		respondToAtEveryoneAndHere: respondToAtEveryoneAndHere,
@@ -1836,6 +1846,17 @@ func (p *Platform) resolveChatName(chatID string) string {
 	}
 	p.chatNameCache.Store(chatID, name)
 	return name
+}
+
+// ResolveChannelName implements core.ChannelNameResolver for multi-workspace mode.
+// Priority: workspace_mapping config → group name (API/cache) → chatID as fallback.
+func (p *Platform) ResolveChannelName(chatID string) (string, error) {
+	if p.workspaceMapping != nil {
+		if mapped, ok := p.workspaceMapping[chatID]; ok && mapped != "" {
+			return mapped, nil
+		}
+	}
+	return p.resolveChatName(chatID), nil
 }
 
 // --- Mention resolution ---
