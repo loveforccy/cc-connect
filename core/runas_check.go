@@ -124,9 +124,9 @@ func PreflightRunAsUser(ctx context.Context, cfg PreflightConfig) PreflightResul
 		if abs, err := filepath.Abs(absWorkDir); err == nil {
 			absWorkDir = abs
 		}
-		if _, err := cfg.Runner.Run(ctx, "-n", "-iu", cfg.RunAsUser, "--", "test", "-r", absWorkDir, "-a", "-w", absWorkDir); err != nil {
+		if _, err := cfg.Runner.Run(ctx, "-n", "-iu", cfg.RunAsUser, "--", "test", "-r", absWorkDir, "-a", "-x", absWorkDir); err != nil {
 			result.Fatal = append(result.Fatal, fmt.Errorf(
-				"project %q: target user %q cannot read AND write work_dir %q. Agents will fail with EACCES at runtime. Fix ownership/permissions on this directory (chown/chmod or an ACL granting the target user rwx) before starting cc-connect.",
+				"project %q: target user %q cannot read and traverse work_dir %q. Agents will fail with EACCES at runtime. Fix ownership/permissions on this directory (chown/chmod or an ACL granting the target user r-x) before starting cc-connect.",
 				cfg.Project, cfg.RunAsUser, absWorkDir))
 		} else {
 			warn := scanDescendants(ctx, cfg.Runner, cfg.RunAsUser, absWorkDir, cfg.ScanConfig)

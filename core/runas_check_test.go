@@ -16,7 +16,7 @@ func TestPreflightRunAsUser_AllPass(t *testing.T) {
 		script: map[string]stubResponse{
 			key("-n", "-iu", "target", "--", "/usr/bin/true"):                          {nil, nil},
 			key("-n", "-iu", "target", "--", "sudo", "-n", "/usr/bin/true"):            {nil, &exec.ExitError{}}, // escalation fails as required
-			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-w", "/tmp/wd"): {nil, nil},
+			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-x", "/tmp/wd"): {nil, nil},
 		},
 	}
 	// Build the find args the real scanner will use. For this test we
@@ -79,7 +79,7 @@ func TestPreflightRunAsUser_TargetCanEscalateIsFatal(t *testing.T) {
 			key("-n", "-iu", "target", "--", "/usr/bin/true"):               {nil, nil},
 			key("-n", "-iu", "target", "--", "sudo", "-n", "/usr/bin/true"): {nil, nil}, // BAD
 			key("-n", "-iu", "target", "--", "sudo", "-n", "-l"):        {[]byte("(ALL) NOPASSWD: ALL"), nil},
-			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-w", "/tmp/wd"): {nil, nil},
+			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-x", "/tmp/wd"): {nil, nil},
 		},
 	}
 	findArgs := []string{
@@ -119,7 +119,7 @@ func TestPreflightRunAsUser_WorkDirInaccessibleIsFatal(t *testing.T) {
 		script: map[string]stubResponse{
 			key("-n", "-iu", "target", "--", "/usr/bin/true"):                          {nil, nil},
 			key("-n", "-iu", "target", "--", "sudo", "-n", "/usr/bin/true"):            {nil, &exec.ExitError{}},
-			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-w", "/tmp/wd"): {[]byte(""), &exec.ExitError{}},
+			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-x", "/tmp/wd"): {[]byte(""), &exec.ExitError{}},
 		},
 	}
 	cfg := PreflightConfig{
@@ -133,8 +133,8 @@ func TestPreflightRunAsUser_WorkDirInaccessibleIsFatal(t *testing.T) {
 	if !result.HasFatal() {
 		t.Fatal("want fatal error")
 	}
-	if !strings.Contains(result.Fatal[0].Error(), "cannot read AND write work_dir") {
-		t.Errorf("want 'cannot read AND write work_dir' in error, got %v", result.Fatal[0])
+	if !strings.Contains(result.Fatal[0].Error(), "cannot read and traverse work_dir") {
+		t.Errorf("want 'cannot read and traverse work_dir' in error, got %v", result.Fatal[0])
 	}
 }
 
@@ -143,7 +143,7 @@ func TestPreflightRunAsUser_DescendantWarnings(t *testing.T) {
 		script: map[string]stubResponse{
 			key("-n", "-iu", "target", "--", "/usr/bin/true"):                          {nil, nil},
 			key("-n", "-iu", "target", "--", "sudo", "-n", "/usr/bin/true"):            {nil, &exec.ExitError{}},
-			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-w", "/tmp/wd"): {nil, nil},
+			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-x", "/tmp/wd"): {nil, nil},
 		},
 	}
 	findArgs := []string{
@@ -185,7 +185,7 @@ func TestPreflightRunAsUser_DescendantWarningsCapped(t *testing.T) {
 		script: map[string]stubResponse{
 			key("-n", "-iu", "target", "--", "/usr/bin/true"):                          {nil, nil},
 			key("-n", "-iu", "target", "--", "sudo", "-n", "/usr/bin/true"):            {nil, &exec.ExitError{}},
-			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-w", "/tmp/wd"): {nil, nil},
+			key("-n", "-iu", "target", "--", "test", "-r", "/tmp/wd", "-a", "-x", "/tmp/wd"): {nil, nil},
 		},
 	}
 	// Generate 75 lines; cap is 3.
