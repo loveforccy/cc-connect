@@ -304,7 +304,7 @@ func TestDispatchMessageKeepsMentionOnlyQuotedText(t *testing.T) {
 	}
 }
 
-func TestOnMessageRepliesToUnauthorizedMention(t *testing.T) {
+func TestOnMessageRepliesToUnauthorizedP2P(t *testing.T) {
 	const appID = "cli_unauthorized"
 	const appSecret = "secret-unauthorized"
 	const botOpenID = "ou_bot"
@@ -355,10 +355,10 @@ func TestOnMessageRepliesToUnauthorizedMention(t *testing.T) {
 		},
 	}
 
-	chatType := "group"
+	chatType := "p2p"
 	msgType := "text"
 	senderType := "user"
-	content := `{"text":"@_user_1 hello"}`
+	content := `{"text":"hello"}`
 	createTime := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	err := p.onMessage(context.Background(), &larkim.P2MessageReceiveV1{
 		Event: &larkim.P2MessageReceiveV1Data{
@@ -373,13 +373,6 @@ func TestOnMessageRepliesToUnauthorizedMention(t *testing.T) {
 				MessageType: &msgType,
 				Content:     &content,
 				CreateTime:  &createTime,
-				Mentions: []*larkim.MentionEvent{
-					{
-						Key:  stringPtr("@_user_1"),
-						Id:   &larkim.UserId{OpenId: stringPtr(botOpenID)},
-						Name: stringPtr("bot"),
-					},
-				},
 			},
 		},
 	})
