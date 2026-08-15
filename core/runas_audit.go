@@ -301,9 +301,9 @@ func computeAuditFatal(r IsolationReport) []string {
 				r.Project, r.RunAsUser, s.Path))
 		}
 	}
-	if r.WorkDirStatus.Path != "" && !r.WorkDirStatus.Writable {
+	if r.WorkDirStatus.Path != "" && !r.WorkDirStatus.Readable {
 		fatal = append(fatal, fmt.Sprintf(
-			"project %q: target user %q cannot write work_dir %q (WORKDIR_WRITABLE=no)",
+			"project %q: target user %q cannot read work_dir %q (WORKDIR_READABLE=no)",
 			r.Project, r.RunAsUser, r.WorkDirStatus.Path))
 	}
 	return fatal

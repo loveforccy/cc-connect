@@ -95,17 +95,17 @@ END probe-version=1
 	}
 }
 
-func TestParseProbeOutput_WorkdirNotWritableIsFatal(t *testing.T) {
+func TestParseProbeOutput_WorkdirNotReadableIsFatal(t *testing.T) {
 	out := `BEGIN probe-version=1
 WORKDIR_PATH /tmp/wd
-WORKDIR_WRITABLE no
+WORKDIR_READABLE no
 END probe-version=1
 `
 	report := IsolationReport{Project: "demo", RunAsUser: "coder", WorkDir: "/tmp/wd"}
 	parseProbeOutput(&report, out)
 	report.Fatal = computeAuditFatal(report)
 	if !report.HasFatal() {
-		t.Fatal("want fatal for non-writable workdir")
+		t.Fatal("want fatal for non-readable workdir")
 	}
 }
 
