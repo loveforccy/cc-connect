@@ -56,6 +56,7 @@ var (
 	_ core.MessageUpdater            = (*Platform)(nil)
 	_ core.PreviewStarter            = (*Platform)(nil)
 	_ core.PreviewCleaner            = (*Platform)(nil)
+	_ core.PreviewFinishPreference   = (*Platform)(nil)
 	_ core.AsyncRecoverablePlatform  = (*Platform)(nil)
 )
 
@@ -591,6 +592,16 @@ func (p *Platform) DeletePreviewMessage(ctx context.Context, previewHandle any) 
 		"session_key":    rc.SessionKey,
 		"preview_handle": rc.ReplyCtx,
 	})
+}
+
+// KeepPreviewOnFinish implements core.PreviewFinishPreference: finalize the
+// preview message in place with the full final text instead of recalling it
+// and sending a fresh message. The gateway had to declare the preview and
+// update_message capabilities for a preview to exist at all, so it has
+// committed to editing the message; a recall would leave a "recalled a
+// message" placeholder and duplicate the content in a second message.
+func (p *Platform) KeepPreviewOnFinish() bool {
+	return true
 }
 
 func (p *Platform) StartTyping(ctx context.Context, replyCtx any) (stop func()) {
