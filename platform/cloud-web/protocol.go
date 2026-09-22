@@ -187,6 +187,13 @@ func buildRegisterPayload(name, project, transport string) wireRegister {
 		Transport: transport,
 		Metadata: map[string]any{
 			"protocol_version": protocolVersion,
+			// Client capabilities advertised to the gateway so it can gate
+			// features on both sides being new enough. keep_preview marks the
+			// KeepPreviewOnFinish behaviour: finalize the preview message in
+			// place instead of recalling it and sending a fresh one. Without
+			// it a preview-enabled gateway would produce a recall placeholder
+			// plus a duplicate final message.
+			"capabilities": []string{"keep_preview"},
 		},
 	}
 }
